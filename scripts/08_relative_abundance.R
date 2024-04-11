@@ -12,6 +12,7 @@ library(here)
 library(microViz)
 library(purrr)
 library(broom)
+library(lsr)
 
 # 01. Import data ----
 ## Define paths ----
@@ -43,13 +44,33 @@ input_path <- paste(
   sep = "/"
 )
 
+group_names <- c(
+  "monensin_antibiotic" = "M + P",
+  "monensin" = "M",
+  "antibiotic" = "P",
+  "none" = "None"
+)
+
 ## Import phyloseq object ----
 bracken_data <- read_rds(
   here(
     output_path,
     "bracken_rarefied.rds"
   )
-)
+) %>%
+  ps_mutate(group = case_when(
+    monensin == TRUE & antibiotic == TRUE ~ "monensin_antibiotic",
+    monensin == TRUE & antibiotic == FALSE ~ "monensin",
+    monensin == FALSE & antibiotic == TRUE ~ "antibiotic",
+    monensin == FALSE & antibiotic == FALSE ~ "none"
+  )) %>%
+  ps_mutate(group = factor(group,
+                           levels = c("monensin_antibiotic",
+                                      "antibiotic",
+                                      "monensin",
+                                      "none"),
+                           ordered = TRUE),
+            gender = ifelse(sex == "Female", "F", "M"))
 
 options(scipen = 999)
 
@@ -103,106 +124,88 @@ phylum_data_sex <- bracken_data %>%
   mutate_at(vars(-c(OTU,sex)),
             ~round(.*100, 4))
 
-## Wilcoxon rank test major phyla ----
-phylum_data <- bracken_data %>%
+phylum_data_group <- bracken_data %>%
   tax_agg("Rank2") %>%
   tax_transform(trans = "compositional") %>%
-  psmelt()
-
-stats_data_sex <- phylum_data %>%
-  group_by(sex, OTU) %>%
+  psmelt() %>%
+  group_by(OTU,group) %>%
   summarise(
-    mean = mean(Abundance)
+    mean = mean(Abundance),
+    median = median(Abundance),
+    min = min(Abundance),
+    max = max(Abundance),
+    sd = sd(Abundance)
   ) %>%
   arrange(-mean) %>%
-  mutate(group = ifelse(mean < 0.01, "Other", OTU)) %>%
-  group_by(sex, group) %>%
-  summarise(
-    mean = sum(mean)
-  ) %>%
-  ungroup() %>%
-  pivot_wider(names_from = "sex",
-              values_from = "mean") %>%
-  arrange(-Female)
+  mutate_at(vars(-c(OTU,group)),
+            ~round(.*100, 4)) %>%
+  filter(mean > 1) %>%
+  select(OTU, group, mean) %>%
+  pivot_wider(names_from = "group",
+              values_from = "mean")
 
-stats_data_monensin <- phylum_data %>%
-  group_by(monensin, OTU) %>%
-  summarise(
-    mean = mean(Abundance)
-  ) %>%
-  arrange(-mean) %>%
-  mutate(group = ifelse(mean < 0.01, "Other", OTU)) %>%
-  group_by(monensin, group) %>%
-  summarise(
-    mean = sum(mean)
-  ) %>%
-  ungroup() %>%
-  pivot_wider(names_from = "monensin",
-              values_from = "mean") %>%
-  arrange(-`TRUE`)
+## ANOVA on top five phyla ----
+phylum_data <- bracken_data %>%
+  tax_agg("Rank2") %>%
+  psmelt() %>%
+  filter(OTU %in% phylum_data_group$OTU)
 
-phyla_list <- stats_data_sex$group[-6]
+aov_phylum <- aov(
+  Abundance ~ group*OTU + sex*OTU,
+  data = phylum_data
+)
 
-tests_sex <- lapply(
-  phyla_list,
-  function(x) {
-    data <- phylum_data %>%
-      filter(Rank2 == x)
-    
-    wilcox.test(
-      formula = Abundance ~ sex,
-      data = data,
-      alternative = "two.sided"
-    )
-  }
-) %>%
-  map_dfr(tidy)
+eta_squared <- etaSquared(aov_phylum)
 
+tukey_data <- TukeyHSD(
+  aov_phylum,
+  conf.level = 0.95
+)
 
-tests_monensin <- lapply(
-  phyla_list,
-  function(x) {
-    data <- phylum_data %>%
-      filter(Rank2 == x)
-    
-    wilcox.test(
-      formula = Abundance ~ monensin,
-      data = data,
-      alternative = "two.sided"
-    )
-  }
-) %>%
-  map_dfr(tidy)
+tukey_sex <- as.data.frame(tukey_data$`OTU:sex`) %>%
+  tibble::rownames_to_column("id") %>%
+  separate(id, sep = "-", into = c("comp1","comp2")) %>%
+  separate(comp1, sep = ":", into = c("OTU1","sex1")) %>%
+  separate(comp2, sep = ":", into = c("OTU2","sex2")) %>%
+  filter(sex1 != sex2) %>%
+  filter(OTU1 == OTU2) %>%
+  filter(`p adj` <= 0.05)
 
-tests_sex$phylum <- phyla_list
-tests_monensin$phylum <- phyla_list
+tukey_group <- as.data.frame(tukey_data$`group:OTU`) %>%
+  tibble::rownames_to_column("id") %>%
+  separate(id, sep = "-", into = c("comp1","comp2")) %>%
+  separate(comp1, sep = ":", into = c("group1","OTU1")) %>%
+  separate(comp2, sep = ":", into = c("group2","OTU2")) %>%
+  filter(group1 != group2) %>%
+  filter(OTU1 == OTU2) %>%
+  filter(`p adj` <= 0.05)
+  
 
-tests_complete_sex <- tests_sex %>%
-  select(phylum, statistic, p.value) %>%
-  left_join(stats_data_sex, by = c("phylum" = "group")) %>%
-  mutate(p_corr = p.adjust(p.value, method = "bonf")) %>%
-  select(phylum, statistic, p.value, p_corr, Male, Female) %>%
-  mutate_at(vars(-c(phylum, statistic)),
-            ~round(., 3))
+### No significant differences detected
 
-tests_complete_monensin <- tests_monensin %>%
-  select(phylum, statistic, p.value) %>%
-  left_join(stats_data_monensin, by = c("phylum" = "group")) %>%
-  mutate(p_corr = p.adjust(p.value, method = "bonf")) %>%
-  select(phylum, statistic, p.value, p_corr, `TRUE`, `FALSE`) %>%
-  mutate_at(vars(-c(phylum, statistic)),
-            ~round(., 3))
 
 ## Phylum plot ----
 p_phylum_comp <- comp_barplot(
   bracken_data,
   tax_level = "Rank2",
   sample_order = "bray",
-  n_taxa = 10
+  n_taxa = 5
   ) +
+  geom_point(aes(shape = sex),
+            y = -0.01,
+            size = 1.5) +
   labs(fill = "Phylum",
+       shape = "Host sex",
        y = "Relative abundance") +
-  facet_grid(~sex, scales = "free_x", space = "free") +
+  facet_grid(
+    ~group, 
+    scales = "free_x", 
+    space = "free", 
+    labeller = as_labeller(group_names)
+    ) +
+  guides(
+    fill = guide_legend(override.aes = list(shape = NA))
+    ) +
   theme(axis.text.x = element_blank(),
         axis.ticks.x = element_blank())
 
@@ -216,38 +219,37 @@ ggsave(
   units = "cm", 
   dpi = 600,
   height = 15,
-  width = 25
+  width = 30
 )
 
+# 03. Top genera table ----
 
-# 03. Plot genera abundance ----
-p_genus_comp <- comp_barplot(
-  bracken_data,
-  tax_level = "Rank6",
-  sample_order = "bray",
-  n_taxa = 10
-) +
-  scale_fill_manual(values = c(
-    RColorBrewer::brewer.pal(10, "Set3"), 
-    "grey70"
-    )) +
-  labs(fill = "Genus",
-       y = "Relative abundance") +
-  facet_grid(~sex, scales = "free_x", space = "free") +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank())
+genera_data <- bracken_data %>%
+  tax_agg("Rank6") %>%
+  tax_transform(trans = "compositional") %>%
+  psmelt()
 
-ggsave(
+top_genera <- genera_data %>%
+  mutate(Abundance = round(Abundance, 3)) %>%
+  group_by(group, Rank6) %>%
+  summarise(
+    mean_abundance = round(mean(Abundance), 3)
+  ) %>%
+  ungroup() %>%
+  slice_max(order_by = mean_abundance,
+            n = 5,
+            by = group) %>%
+  pivot_wider(
+    names_from = "group",
+    values_from = "mean_abundance",
+    values_fill = 0
+  )
+
+write_delim(
+  top_genera,
   here(
     output_path,
-    "08_genus_comp.png"
+    "08_relabund_stats_genera.txt"
   ),
-  p_genus_comp,
-  device = "png",
-  units = "cm", 
-  dpi = 600,
-  height = 15,
-  width = 25
+  delim = "\t"
 )
-
-
