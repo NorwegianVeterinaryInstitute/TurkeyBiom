@@ -13,6 +13,7 @@ library(microViz)
 library(purrr)
 library(broom)
 library(lsr)
+library(tibble)
 
 # 01. Import data ----
 ## Define paths ----
@@ -51,26 +52,54 @@ group_names <- c(
   "none" = "None"
 )
 
+## Import metadata -----
+metadata <- read_delim(
+  here(
+    input_path,
+    "00_final_treatment_metadata.txt"
+  ),
+  delim = "\t"
+)
+
 ## Import phyloseq object ----
 bracken_data <- read_rds(
   here(
     output_path,
     "bracken_rarefied.rds"
   )
-) %>%
-  ps_mutate(group = case_when(
+)
+
+metadata_ps <- bracken_data@sam_data
+metadata_ps$id <- rownames(metadata_ps)
+
+metadata_ps_clean <- as_tibble(metadata_ps) %>%
+  mutate(group = case_when(
     monensin == TRUE & antibiotic == TRUE ~ "monensin_antibiotic",
     monensin == TRUE & antibiotic == FALSE ~ "monensin",
     monensin == FALSE & antibiotic == TRUE ~ "antibiotic",
     monensin == FALSE & antibiotic == FALSE ~ "none"
   )) %>%
-  ps_mutate(group = factor(group,
-                           levels = c("monensin_antibiotic",
-                                      "antibiotic",
-                                      "monensin",
-                                      "none"),
-                           ordered = TRUE),
-            gender = ifelse(sex == "Female", "F", "M"))
+  mutate(group = factor(group,
+                        levels = c("monensin_antibiotic",
+                                   "antibiotic",
+                                   "monensin",
+                                   "none"))) %>%
+  mutate(seq_id = sub(".+-([A-Z].+-.+)_pe_db1..+", "\\1", id)) %>%
+  left_join(metadata[,c("seq_id","farm_id","flock_id")], by = "seq_id") %>%
+  select(id,
+         sex,
+         age_days,
+         sample_month,
+         group,
+         farm_id,
+         flock_id) %>%
+  mutate(sex = factor(sex),
+         farm_id = factor(farm_id),
+         flock_id = factor(flock_id)) %>%
+  column_to_rownames("id")
+
+bracken_data@sam_data <- sample_data(metadata_ps_clean)
+
 
 options(scipen = 999)
 
@@ -151,7 +180,7 @@ phylum_data <- bracken_data %>%
   filter(OTU %in% phylum_data_group$OTU)
 
 aov_phylum <- aov(
-  Abundance ~ group*OTU + sex*OTU,
+  Abundance ~ group*OTU  + sex*OTU + farm_id*OTU,
   data = phylum_data
 )
 
@@ -179,9 +208,15 @@ tukey_group <- as.data.frame(tukey_data$`group:OTU`) %>%
   filter(group1 != group2) %>%
   filter(OTU1 == OTU2) %>%
   filter(`p adj` <= 0.05)
-  
 
-### No significant differences detected
+tukey_farm <- as.data.frame(tukey_data$`OTU:farm_id`) %>%
+  tibble::rownames_to_column("id") %>%
+  separate(id, sep = "-", into = c("comp1","comp2")) %>%
+  separate(comp1, sep = ":", into = c("group1","OTU1")) %>%
+  separate(comp2, sep = ":", into = c("group2","OTU2")) %>%
+  filter(group1 == group2) %>%
+  filter(OTU1 != OTU2) %>%
+  filter(`p adj` <= 0.05)
 
 
 ## Phylum plot ----
