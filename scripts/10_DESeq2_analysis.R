@@ -46,6 +46,16 @@ input_path <- paste(
   sep = "/"
 )
 
+## Import metadata ----
+metadata <- read_delim(
+  here(
+    input_path,
+    "00_final_treatment_metadata.txt"
+  ),
+  delim = "\t"
+)
+
+
 ## Import phyloseq object ----
 ### Import the non-rarefied data
 bracken_data <- read_rds(
@@ -61,25 +71,44 @@ bracken_data <- read_rds(
     prev_detection_threshold = 0
   ) %>%
   ps_get(counts = TRUE) %>%
-  ## Filter to only include bacteria
-  tax_select("Bacteria", ranks_searched = "Rank1", strict_matches = TRUE) %>%
-  ps_mutate(group = case_when(
+  tax_select("Bacteria", ranks_searched = "Rank1", strict_matches = TRUE)
+
+## Set metadata ----
+## Set metadata
+metadata_ps <- bracken_data@sam_data
+metadata_ps$id <- rownames(metadata_ps)
+
+metadata_ps_clean <- as_tibble(metadata_ps) %>%
+  mutate(group = case_when(
     monensin == TRUE & antibiotic == TRUE ~ "monensin_antibiotic",
     monensin == TRUE & antibiotic == FALSE ~ "monensin",
     monensin == FALSE & antibiotic == TRUE ~ "antibiotic",
     monensin == FALSE & antibiotic == FALSE ~ "none"
   )) %>%
-  ps_mutate(group = factor(group,
-                           levels = c("monensin_antibiotic",
-                                      "antibiotic",
-                                      "monensin",
-                                      "none")),
-            sex = factor(sex)) %>%
-  ps_select(sex, group) %>%
-  ps_mutate(group = relevel(group, ref = "none"))
+  mutate(group = factor(group,
+                        levels = c("monensin_antibiotic",
+                                   "antibiotic",
+                                   "monensin",
+                                   "none")),
+         group = relevel(group, ref = "none")) %>%
+  mutate(seq_id = sub(".+-([A-Z].+-.+)_pe_db1..+", "\\1", id)) %>%
+  left_join(metadata[,c("seq_id","farm_id","flock_id")], by = "seq_id") %>%
+  select(id,
+         sex,
+         age_days,
+         sample_month,
+         group,
+         farm_id,
+         flock_id) %>%
+  column_to_rownames("id")
+
+bracken_data@sam_data <- sample_data(metadata_ps_clean)
 
 # 02. Run DESeq2 ----
-deseq_data <- phyloseq_to_deseq2(bracken_data, design =  ~ group + sex)
+deseq_data <- phyloseq_to_deseq2(
+  bracken_data, 
+  design =  ~ group + sex + farm_id
+)
 
 deseq_res <- DESeq(
   deseq_data,
@@ -136,25 +165,6 @@ deseq_sign_results <- final_results %>%
   mutate(abs_lfc = abs(log2FoldChange)) %>%
   arrange(ref, -abs_lfc)
 
-
-## Create list of results on genera of interest
-## from the diversity analyses (RDA)
-genera_of_interest <- c(
-  "Megasphaera",
-  "Megamonas",
-  "Bifidobacterium",
-  "Clostridium",
-  "Dysosmobacter",
-  "Flintibacter",
-  "Eubacterium",
-  "Enterocloster",
-  "Flavoniflactor",
-  "Faecalibacterium"
-)
-
-deseq_genera <- final_results %>%
-  filter(Rank6 %in% genera_of_interest)
-
 ## Write results to file
 write_delim(
   final_results,
@@ -174,17 +184,6 @@ write_delim(
   delim = "\t"
 )
 
-
-write_delim(
-  deseq_genera,
-  here(
-    output_path,
-    "10_DESeq_genera.txt"
-  ),
-  delim = "\t"
-)
-
-
 # 03. Plot results ----
 
 label_vector <- labeller(
@@ -198,7 +197,9 @@ label_vector <- labeller(
 
 col_grid <- rgb(235, 235, 235, 100, maxColorValue = 255)
 
-p_deseq <- ggplot(deseq_sign_results, aes(log2FoldChange, species, fill = log2FoldChange)) +
+p_deseq <- deseq_sign_results %>%
+  filter(!grepl("farm", ref)) %>%
+  ggplot(aes(log2FoldChange, species, fill = log2FoldChange)) +
   geom_errorbar(aes(xmin = log2FoldChange - lfcSE,
                     xmax = log2FoldChange + lfcSE),
                 width = 0.5) +
@@ -228,6 +229,6 @@ ggsave(
   device = "png",
   units = "cm", 
   dpi = 600,
-  height = 25,
-  width = 25
+  height = 20,
+  width = 22
 )
