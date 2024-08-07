@@ -428,7 +428,7 @@ ord_data <- bracken_data %>%
   ps_get(counts = TRUE)
 
 sampledf <- data.frame(sample_data(bracken_data)) %>%
-  select(sex, group, farm_id, flock_id) %>%
+  select(sex, group, farm_id, flock_id, age_days) %>%
   mutate(sex = factor(sex),
          group = factor(group, ordered = FALSE),
          farm_id = factor(farm_id),

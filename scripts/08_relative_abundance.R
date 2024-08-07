@@ -226,9 +226,15 @@ p_phylum_comp <- comp_barplot(
   sample_order = "bray",
   n_taxa = 5
   ) +
-  geom_point(aes(shape = sex),
+  geom_point(aes(color = sex),
             y = -0.01,
-            size = 1.5) +
+            size = 2) +
+  scale_color_manual(
+    values = c(
+      "Female" = "#ff7f00",
+      "Male" = "#6a3d9a"
+    )
+  ) +
   labs(fill = "Phylum",
        shape = "Host sex",
        y = "Relative abundance") +
@@ -271,6 +277,7 @@ top_genera <- genera_data %>%
     mean_abundance = round(mean(Abundance), 3)
   ) %>%
   ungroup() %>%
+  mutate(mean_abundance = mean_abundance * 100) %>%
   slice_max(order_by = mean_abundance,
             n = 5,
             by = group) %>%
