@@ -49,6 +49,24 @@ data <- read_delim(
     sep = "/"),
   delim = "\t") 
 
+
+metadata <- read_delim(
+  here(
+    input_path,
+    "00_final_treatment_metadata.txt"
+  ),
+  delim = "\t"
+)
+
+# 01. Number of farms and samples per farm
+
+all_farms <- data %>%
+  count(eier_lokalitetnummer)
+
+included_farms <- data %>%
+  filter(saksnr %in% metadata$saksnr) %>%
+  count(eier_lokalitetnummer)
+
 # 01. Sampling date distribution ----
 palette <- c("Male" = "#80b1d3",
              "Female" = "#fb8072")
