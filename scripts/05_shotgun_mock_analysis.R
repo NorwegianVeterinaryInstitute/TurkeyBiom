@@ -35,12 +35,16 @@ output_path <- paste(
 )
 
 input_path <- paste(
-  "C:",
-  "Users",
-  "vi1511",
-  "temp",
-  "data",
-  "turkeybiom",
+  "/\\vetinst.no",
+  "dfs-felles",
+  "StasjonK",
+  "FAG",
+  "Tverrfaglig",
+  "AMR",
+  "FoU-aktiviteter & prosjekter",
+  "12303_TurkeyBiom",
+  "R",
+  "Data",
   sep = "/"
 )
 
@@ -49,17 +53,20 @@ tax_data <- import_biom(
   here(
     input_path,
     "kraken_biom",
-    "bracken.biom"
+    "bracken_controls.biom"
   )
-)
+) %>%
+  subset_taxa(Rank7 != "s__sapiens")
+
+## Fix sample names
+colnames(tax_data@otu_table) <- c("MOCK","NEG")
+
 
 ## Generate metadata
 sample_metadata <- data.frame(
-  sample = c("106-MOCK_pe_run1_db1.bracken.kraken2.report_bracken_species",
-             "107-NEG_pe_run1_db1.bracken.kraken2.report_bracken_species",
-             "3-A5_pe_run1_db1.bracken.kraken2.report_bracken_species",
-             "75-F3_pe_run1_db1.bracken.kraken2.report_bracken_species"),
-  group = c("mock","neg","sample","sample")
+  sample = c("MOCK",
+             "NEG"),
+  group = c("ZymoBiomics Mock","Negative control")
 )
 
 SAM <- sample_data(
@@ -70,60 +77,96 @@ SAM <- sample_data(
 tax_data@sam_data <- SAM
 
 # 02. Fix taxonomy ----
-## We would like to merge at genus level, so
-## we run tax_agg at that rank (Rank6) and 
-## check if there are any problems
-tax_agg(tax_data, rank = "Rank6")
-
-
-## Problems were detected, these are fixed with
-## tax_fix below
 tax_table_fixed <- tax_data %>%
+  tax_mutate(Rank1 = sub("k__", "", Rank1),
+             Rank2 = sub("p__", "", Rank2),
+             Rank3 = sub("c__", "", Rank3),
+             Rank4 = sub("o__", "", Rank4),
+             Rank5 = sub("f__", "", Rank5),
+             Rank6 = sub("g__", "", Rank6),
+             Rank7 = sub("s__", "", Rank7)) %>%
   tax_fix(
-  min_length = 4,
-  unknowns = c(
-    "s__uncultured prokaryote",
-    "s__uncultured organism",
-    "s__uncultured microorganism",
-    "s__synthetic construct",
-    "s__unidentified plasmid",
-    "s__uncultured marine organism",
-    "s__unidentified",
-    "s__Cloning vector pMSW107",
-    "s__synthetic Caulobacter sp. 'ethensis'",
-    "s__uncultured marine microorganism HF4000_APKG2H5",
-    "s__unidentified microorganism",
-    "s__eukaryotic synthetic construct",
-    "s__Cloning vector pMSW105",
-    "g__Alsophila",
-    "g__Venturia"
-    ),
-  sep = " ", anon_unique = TRUE,
-  suffix_rank = "current"
-)
-
-## Now we can aggregate correctly
-taxdata_agg <- tax_agg(
-  tax_table_fixed,
-  rank = "Rank6"
-)
-
-## Calculate relative abundances
-relabund_data <- transform_sample_counts(
-  taxdata_agg, function(x) x*100 / sum(x)
+    min_length = 4,
+    unknowns = c(""),
+    sep = " ", anon_unique = TRUE,
+    suffix_rank = "current"
   )
 
-## Split data
-plot_data <- psmelt(
-  relabund_data
-) %>%
-  filter(Sample %in% c(
-    "106-MOCK_pe_run1_db1.bracken.kraken2.report_bracken_species",
-    "107-NEG_pe_run1_db1.bracken.kraken2.report_bracken_species")) %>%
-  mutate(Rank6 = sub(".__", "", Rank6)) %>%
-  select(Sample, Abundance, contains("Rank")) %>%
-  split(f = .$Sample)
+# Number of reads
+reads_data <- as.data.frame(sample_sums(tax_table_fixed)) %>%
+  rownames_to_column("sample") %>%
+  rename("reads" = 2)
 
+p_n_reads <- ggplot(reads_data, aes(sample, reads)) +
+  geom_col(color = "black") +
+  labs(y = "Number of reads") +
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank())
+
+# Abundance
+### Phylum level
+p_phyla <- comp_barplot(
+  tax_table_fixed,
+  tax_level = "Rank2",
+  sample_order = "bray",
+  n_taxa = 8
+) +
+  labs(y = "Relative abundance (%)",
+       fill = "Phyla") +
+  theme(axis.ticks.x = element_blank())
+
+### Genus level
+genera_palette <- c(
+  RColorBrewer::brewer.pal(
+    8,
+    "Set3"
+    ),
+  "grey80" 
+  )
+
+names(genera_palette) <-
+  c(
+    "Listeria",
+    "Pseudomonas",
+    "Saccharomyces",
+    "Bacillus",
+    "Faecalibacterium",
+    "Bifidobacterium",
+    "Alistipes",
+    "Solanum",
+    "Other"
+  )
+
+p_genera <- comp_barplot(
+  tax_table_fixed,
+  tax_level = "Rank6",
+  sample_order = "bray",
+  n_taxa = 8
+) +
+  labs(y = "Relative abundance (%)",
+       fill = "Genera") +
+  scale_fill_manual(values = genera_palette) +
+  theme(axis.ticks.x = element_blank())
+
+
+p_relabund_mock_neg <- p_n_reads + p_phyla + p_genera +
+  plot_layout(ncol = 3) +
+  plot_annotation(tag_levels = "A")
+
+
+ggsave(
+  here(
+    output_path,
+    "05_relative_abundance_mock_neg.png"
+  ),
+  p_relabund_mock_neg,
+  device = "png",
+  units = "cm",
+  dpi = 600,
+  height = 12,
+  width = 25
+)
 
 
 # 03. Mock data ----
@@ -141,16 +184,6 @@ genus_list <- c(
   "Staphylococcus"
 )
 
-mock_data <- plot_data$`106-MOCK_pe_run1_db1.bracken.kraken2.report_bracken_species` %>%
-  mutate(group = ifelse(
-    Rank6 %in% genus_list,
-    Rank6, 
-    "Other"
-  )) %>%
-  group_by(group) %>%
-  summarise(Abundance = round(sum(Abundance), 5)) %>%
-  ungroup()
-
 original_mock_composition <- data.frame(
   group = c("Listeria",
             "Pseudomonas",
@@ -163,20 +196,30 @@ original_mock_composition <- data.frame(
             "Cryptococcus",
             "Staphylococcus"),
   Abundance_original = c(89.1,
-                8.9,
-                0.89,
-                0.89,
-                0.089,
-                0.089,
-                0.0089,
-                0.00089,
-                0.00089,
-                0.000089)
-) %>%
-  left_join(mock_data)
+                         8.9,
+                         0.89,
+                         0.89,
+                         0.089,
+                         0.089,
+                         0.0089,
+                         0.00089,
+                         0.00089,
+                         0.000089))
+
+mock_data <- plot_data$`106-MOCK_pe_db1.bracken.kraken2.report_bracken_species` %>%
+  mutate(group = ifelse(
+    Rank6 %in% genus_list,
+    Rank6, 
+    "Other"
+  )) %>%
+  group_by(group) %>%
+  summarise(Abundance = round(sum(Abundance), 5)) %>%
+  ungroup() %>%
+  left_join(original_mock_composition) %>%
+  arrange(-Abundance_original)
 
 write_delim(
-  original_mock_composition,
+  mock_data,
   here(
     output_path,
     "05_shotgun_mock_composition.txt"
@@ -184,137 +227,4 @@ write_delim(
   delim = "\t"
 )
 
-## Identify which genera constitute the "Other" 
-## category, likely contaminants which should
-## be represented in the negative control.
-## Aggregate this at a higher level
-mock_other_phyla <- plot_data$`106-MOCK_pe_run1_db1.bracken.kraken2.report_bracken_species` %>%
-  mutate(group = ifelse(
-    Rank6 %in% genus_list,
-    Rank6, 
-    "Other"
-  )) %>%
-  filter(group == "Other") %>%
-  group_by(Rank2) %>%
-  summarise(Abundance_mock = sum(Abundance)) %>%
-  ungroup() %>%
-  mutate(Rank2 = sub(".__", "", Rank2)) %>%
-  mutate(total_perc = sum(Abundance_mock),
-         new_abundance = Abundance_mock/total_perc * 100) %>%
-  select(-c(Abundance_mock, total_perc)) %>%
-  rename("Abundance_mock" = new_abundance) %>%
-  arrange(-Abundance_mock)
 
-
-# 04. Negative control ----
-neg_data <- plot_data$`107-NEG_pe_run1_db1.bracken.kraken2.report_bracken_species` %>%
-  group_by(Rank2) %>%
-  summarise(Abundance_neg = sum(Abundance)) %>%
-  ungroup() %>%
-  mutate(Rank2 = sub(".__", "", Rank2)) %>%
-  arrange(-Abundance_neg)
-
-## Compare the "other" category in the mock to the actual
-## phyla identified in the negative control
-mock_neg_comp <- mock_other_phyla %>%
-  left_join(neg_data) %>%
-  filter(Abundance_mock > 0 | Abundance_neg > 0) %>%
-  mutate(group = ifelse(Abundance_mock > 0.1 | Abundance_neg > 0.1, Rank2, "Other")) %>%
-  group_by(group) %>%
-  summarise(Abundance_mock = sum(Abundance_mock),
-            Abundance_neg = sum(Abundance_neg)) %>%
-  ungroup() %>%
-  pivot_longer(
-    cols = -group,
-    names_to = "type",
-    values_to = "abundance"
-  ) %>%
-  mutate(type = sub("Abundance_", "", type))
-
-p1 <- ggplot(mock_neg_comp, 
-             aes(reorder(group, -abundance), abundance, color = type)) +
-  geom_point(size = 3) +
-  labs(x = "Phyla",
-       y = "Relative abundance",
-       color = "Sample") +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3))
-
-p2 <- ggplot(mock_neg_comp, aes(type, abundance, fill = group)) +
-  geom_col(color = "white") +
-  labs(y = "Relative abundance",
-       fill = "Phyla") +
-  theme_bw() +
-  theme(axis.title.x = element_blank(),
-        panel.grid = element_blank())
-
-
-p3 <- ( p2 + guide_area() ) / p1
-
-ggsave(
-  here(
-    output_path,
-    "05_relative_abundance_contaminants.png"
-  ),
-  p3,
-  device = "png",
-  units = "cm",
-  dpi = 600,
-  height = 20,
-  width = 25
-)
-
-## Investigate major groups within the negative control ----
-neg_data_major <- plot_data$`107-NEG_pe_run1_db1.bracken.kraken2.report_bracken_species` %>%
-  filter(Rank2 %in% c("p__Firmicutes",
-                      "p__Arthropoda",
-                      "p__Bacteroidota")) %>%
-  group_by(Rank1,Rank3) %>%
-  summarise(Abundance_neg = sum(Abundance)) %>%
-  mutate_at(vars(contains("Rank")),
-            ~sub(".__", "", .))
-
-mock_data_major <- plot_data$`106-MOCK_pe_run1_db1.bracken.kraken2.report_bracken_species` %>%
-  filter(Rank2 %in% c("p__Firmicutes",
-                      "p__Arthropoda",
-                      "p__Bacteroidota")) %>%
-  group_by(Rank1,Rank3) %>%
-  summarise(Abundance_mock = sum(Abundance)) %>%
-  mutate_at(vars(contains("Rank")),
-            ~sub(".__", "", .))
-
-major_data_all <- neg_data_major %>%
-  left_join(mock_data_major) %>%
-  pivot_longer(
-    cols = c("Abundance_neg",
-             "Abundance_mock"),
-    names_to = "sample",
-    values_to = "abundance"
-  ) %>%
-  mutate(sample = sub("Abundance_", "", sample))
-
-
-p4 <- ggplot(major_data_all, aes(Rank3, abundance, color = sample)) +
-  geom_point(size = 3) +
-  facet_grid(~Rank1, scales = "free_x") +
-  labs(x = NULL,
-       y = "Relative abundance",
-       color = NULL) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90,
-                                   hjust = 1,
-                                   vjust = 0.3))
-
-
-ggsave(
-  here(
-    output_path,
-    "05_relative_abundance_contaminants_major.png"
-  ),
-  p4,
-  device = "png",
-  units = "cm",
-  dpi = 600,
-  height = 15,
-  width = 20
-)
