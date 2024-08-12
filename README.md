@@ -1,6 +1,6 @@
 # Code repository for the TurkeyBiom project
 
-This repository holds the R code used to analyse and generate figures for the publication "Monensin phase-out in Norwegian turkey production decreases **Bifidobacterium** spp. abundance while enhancing microbial diversity".
+This repository holds the R code used to analyse and generate figures for the publication "Monensin phase-out in Norwegian turkey production decreases *Bifidobacterium* spp. abundance while enhancing microbial diversity".
 All scripts can be found in the `scripts` directory.
 
 - `01_sample_overview.R`: Script for generating figures and tables used to get an overview of the data.
