@@ -60,12 +60,8 @@ metadata <- read_delim(
 
 # 01. Number of farms and samples per farm
 
-all_farms <- data %>%
-  count(eier_lokalitetnummer)
-
-included_farms <- data %>%
-  filter(saksnr %in% metadata$saksnr) %>%
-  count(eier_lokalitetnummer)
+included_farms <- metadata %>%
+  count(farm_id)
 
 # 01. Sampling date distribution ----
 palette <- c("Male" = "#80b1d3",
