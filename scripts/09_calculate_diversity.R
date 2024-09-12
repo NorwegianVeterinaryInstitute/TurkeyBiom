@@ -177,10 +177,13 @@ summary(
 
 eta_squared <- etaSquared(alpha_model2)
 
-TukeyHSD(
+alpha_tukey <- TukeyHSD(
   alpha_model2,
   conf.level = 0.95
   )
+
+alpha_tukey_farm <- as.data.frame(alpha_tukey$farm_id)
+
 
 ## Plot results ----
 p_alpha_div_sex <- ggplot(alpha_div, aes(sex, Shannon)) +
