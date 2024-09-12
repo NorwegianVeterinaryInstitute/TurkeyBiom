@@ -194,9 +194,9 @@ tukey_data <- TukeyHSD(
 tukey_sex <- as.data.frame(tukey_data$`OTU:sex`) %>%
   tibble::rownames_to_column("id") %>%
   separate(id, sep = "-", into = c("comp1","comp2")) %>%
-  separate(comp1, sep = ":", into = c("OTU1","sex1")) %>%
-  separate(comp2, sep = ":", into = c("OTU2","sex2")) %>%
-  filter(sex1 != sex2) %>%
+  separate(comp1, sep = ":", into = c("OTU1","group1")) %>%
+  separate(comp2, sep = ":", into = c("OTU2","group2")) %>%
+  filter(group1 != group2) %>%
   filter(OTU1 == OTU2) %>%
   filter(`p adj` <= 0.05)
 
@@ -207,16 +207,36 @@ tukey_group <- as.data.frame(tukey_data$`group:OTU`) %>%
   separate(comp2, sep = ":", into = c("group2","OTU2")) %>%
   filter(group1 != group2) %>%
   filter(OTU1 == OTU2) %>%
-  filter(`p adj` <= 0.05)
+  filter(`p adj` <= 0.05) %>%
+  select(OTU1, group1, OTU2, group2, diff, lwr, upr, `p adj`)
 
 tukey_farm <- as.data.frame(tukey_data$`OTU:farm_id`) %>%
   tibble::rownames_to_column("id") %>%
   separate(id, sep = "-", into = c("comp1","comp2")) %>%
-  separate(comp1, sep = ":", into = c("group1","OTU1")) %>%
-  separate(comp2, sep = ":", into = c("group2","OTU2")) %>%
-  filter(group1 == group2) %>%
-  filter(OTU1 != OTU2) %>%
-  filter(`p adj` <= 0.05)
+  separate(comp1, sep = ":", into = c("OTU1","group1")) %>%
+  separate(comp2, sep = ":", into = c("OTU2","group2")) %>%
+  filter(group1 != group2) %>%
+  filter(OTU1 == OTU2) %>%
+  filter(`p adj` <= 0.05) %>%
+  select(OTU1, group1, OTU2, group2, diff, lwr, upr, `p adj`)
+
+tukey_all <- rbind(
+  tukey_sex,
+  tukey_group,
+  tukey_farm
+) %>%
+  select(OTU1, group1, group2, `p adj`) %>%
+  mutate(`p adj` = round(`p adj`, 4))
+
+
+write_delim(
+  tukey_all,
+  here(
+    output_path,
+    "08_phylum_tukey.txt"
+  ),
+  delim = "\t"
+)
 
 
 ## Phylum plot ----
@@ -231,12 +251,12 @@ p_phylum_comp <- comp_barplot(
             size = 2) +
   scale_color_manual(
     values = c(
-      "Female" = "#ff7f00",
-      "Male" = "#6a3d9a"
+      "Female" = "grey80",
+      "Male" = "black"
     )
   ) +
   labs(fill = "Phylum",
-       shape = "Host sex",
+       color = "Host sex",
        y = "Relative abundance") +
   facet_grid(
     ~group, 
