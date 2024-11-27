@@ -186,6 +186,7 @@ write_delim(
 
 # 03. Plot results ----
 
+## Define label vector for plot
 label_vector <- labeller(
   .cols = c(
     "group_monensin_antibiotic_vs_none" = "M+P vs. None",
@@ -195,24 +196,35 @@ label_vector <- labeller(
   )
 )
 
+## Define color grid for panel grid in plot
 col_grid <- rgb(235, 235, 235, 100, maxColorValue = 255)
 
+## Import gram-stain data
+gram_data <- readxl::read_xlsx(
+  here(
+    input_path,
+    "gram_stains_DESeq2_results.xlsx"
+  )
+)
+
+deseq_sign_results <- deseq_sign_results %>%
+  left_join(gram_data, relationship = "many-to-many")
+
+gram_palette <- c(
+  "Negative" = "#80b1d3",
+  "Positive" = "#fb9a99"
+)
+
 p_deseq <- deseq_sign_results %>%
+  ## Remove results on farm level
   filter(!grepl("farm", ref)) %>%
-  ggplot(aes(log2FoldChange, species, fill = log2FoldChange)) +
+  ggplot(aes(log2FoldChange, species, fill = Gram)) +
   geom_errorbar(aes(xmin = log2FoldChange - lfcSE,
                     xmax = log2FoldChange + lfcSE),
                 width = 0.5) +
   geom_point(pch = 21,
              size = 4) +
-  scale_fill_gradientn(colors = brewer.pal(9, "Spectral"),
-                       guide = guide_colourbar(
-                         ticks = TRUE,
-                         nbin = 50,
-                         barheight = 10,
-                         label = TRUE,
-                         barwidth = 0.5
-                       )) +
+  scale_fill_manual(values = gram_palette) +
   theme_bw() +
   theme(axis.text.y = element_text(face = "italic", size = 8),
         panel.grid = element_line(color = col_grid),
